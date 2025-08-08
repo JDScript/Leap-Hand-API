@@ -1,0 +1,3 @@
+[submodule "vendor/dynamixel-sdk"]
+	path = vendor/dynamixel-sdk
+	url = git@github.com:ROBOTIS-GIT/DynamixelSDK.git
