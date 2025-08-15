@@ -61,17 +61,6 @@ class LeapHand:
         adjusted_positions = joint_positions - self._joint_offsets
         self._driver.set_joint_positions(allegro_positions_to_leap(adjusted_positions))
 
-    def calibrate_offsets(self):
-        current_positions = self._driver.get_joint_positions()
-        if len(current_positions) != 16:
-            raise ValueError("Expected 16 joint positions.")
-
-        offsets = current_positions - np.pi
-        offsets = np.round(offsets / (np.pi / 2)) * (np.pi / 2)
-
-        self._joint_offsets = offsets
-        print(f"Calibrated joint offsets: {self._joint_offsets}")
-
 
 if __name__ == "__main__":
     from .dynamixel.driver import DynamixelDriver
