@@ -17,16 +17,19 @@ from dynamixel_sdk.robotis_def import DXL_LOWORD
 import numpy as np
 
 from .constants import ADDR_GOAL_POSITION
+from .constants import ADDR_HOMING_OFFSET
+from .constants import ADDR_OPERATING_MODE
+from .constants import ADDR_POSITION_P_GAIN
 from .constants import ADDR_PRESENT_CURRENT
 from .constants import ADDR_PRESENT_POS_VEL_CUR
 from .constants import ADDR_PRESENT_POSITION
 from .constants import ADDR_PRESENT_VELOCITY
 from .constants import ADDR_TORQUE_ENABLE
-from .constants import LEN_GOAL_POSITION
-from .constants import LEN_PRESENT_CURRENT
-from .constants import LEN_PRESENT_POS_VEL_CUR
-from .constants import LEN_PRESENT_POSITION
-from .constants import LEN_PRESENT_VELOCITY
+from .constants import SIZE_GOAL_POSITION
+from .constants import SIZE_PRESENT_CURRENT
+from .constants import SIZE_PRESENT_POS_VEL_CUR
+from .constants import SIZE_PRESENT_POSITION
+from .constants import SIZE_PRESENT_VELOCITY
 from .protocol import DynamixelDriverProtocol
 
 logging.basicConfig(level=logging.INFO)
@@ -71,14 +74,14 @@ class DynamixelDriver(DynamixelDriverProtocol):
             self._port_handler,
             self._packet_handler,
             ADDR_PRESENT_POS_VEL_CUR,
-            LEN_PRESENT_POS_VEL_CUR,
+            SIZE_PRESENT_POS_VEL_CUR,
         )
         # Writer for goal positions
         self._group_sync_write = GroupSyncWrite(
             self._port_handler,
             self._packet_handler,
             ADDR_GOAL_POSITION,
-            LEN_GOAL_POSITION,
+            SIZE_GOAL_POSITION,
         )
 
         # Open the port and set the baud rate
@@ -122,20 +125,20 @@ class DynamixelDriver(DynamixelDriverProtocol):
                 currents = np.zeros_like(self._joint_currents)
 
                 for i, servo_id in enumerate(self.servo_ids):
-                    if self._group_sync_read.isAvailable(servo_id, ADDR_PRESENT_POS_VEL_CUR, LEN_PRESENT_POS_VEL_CUR):
+                    if self._group_sync_read.isAvailable(servo_id, ADDR_PRESENT_POS_VEL_CUR, SIZE_PRESENT_POS_VEL_CUR):
                         positions[i] = np.int32(
                             np.uint32(
-                                self._group_sync_read.getData(servo_id, ADDR_PRESENT_POSITION, LEN_PRESENT_POSITION)
+                                self._group_sync_read.getData(servo_id, ADDR_PRESENT_POSITION, SIZE_PRESENT_POSITION)
                             )
                         )
                         velocities[i] = np.int32(
                             np.uint32(
-                                self._group_sync_read.getData(servo_id, ADDR_PRESENT_VELOCITY, LEN_PRESENT_VELOCITY)
+                                self._group_sync_read.getData(servo_id, ADDR_PRESENT_VELOCITY, SIZE_PRESENT_VELOCITY)
                             )
                         )
                         currents[i] = np.int32(
                             np.uint32(
-                                self._group_sync_read.getData(servo_id, ADDR_PRESENT_CURRENT, LEN_PRESENT_CURRENT)
+                                self._group_sync_read.getData(servo_id, ADDR_PRESENT_CURRENT, SIZE_PRESENT_CURRENT)
                             )
                         )
 
@@ -150,6 +153,60 @@ class DynamixelDriver(DynamixelDriverProtocol):
 
     def torque_enabled(self) -> bool:
         return self._torque_enabled
+
+    def set_operation_mode(self, mode: int):
+        """Set the operation mode for the Dynamixel servos.
+
+        Args:
+            mode (int): The operation mode to set.
+        """
+        with self._lock:
+            for dxl_id in self.servo_ids:
+                dxl_comm_result, dxl_error = self._packet_handler.write1ByteTxRx(
+                    self._port_handler, dxl_id, ADDR_OPERATING_MODE, mode
+                )
+                if dxl_comm_result != COMM_SUCCESS or dxl_error != 0:
+                    raise RuntimeError(f"Failed to set operation mode for Dynamixel with ID {dxl_id}")
+
+    def set_p_gain(self, gains: list[float]):
+        """Set the P gain for the Dynamixel servos.
+
+        Args:
+            gains (list[float]): The P gain values to set.
+        """
+        with self._lock:
+            for dxl_id, gain in zip(self.servo_ids, gains, strict=False):
+                dxl_comm_result, dxl_error = self._packet_handler.write4ByteTxRx(
+                    self._port_handler, dxl_id, ADDR_POSITION_P_GAIN, int(gain)
+                )
+                if dxl_comm_result != COMM_SUCCESS or dxl_error != 0:
+                    raise RuntimeError(f"Failed to set P gain for Dynamixel with ID {dxl_id}")
+
+    def get_operation_mode(self) -> dict[int, int]:
+        with self._lock:
+            modes = {}
+            for dxl_id in self.servo_ids:
+                data, dxl_comm_result, dxl_error = self._packet_handler.read1ByteTxRx(
+                    self._port_handler, dxl_id, ADDR_OPERATING_MODE
+                )
+                if dxl_comm_result != COMM_SUCCESS or dxl_error != 0:
+                    raise RuntimeError(f"Failed to get operation mode for Dynamixel with ID {dxl_id}")
+                modes[dxl_id] = data
+        return modes
+
+    def set_homing_offset(self, offsets: list[int]):
+        """Set the homing offset for the Dynamixel servos.
+
+        Args:
+            offsets (list[float]): The homing offset values to set in pulse.
+        """
+        with self._lock:
+            for dxl_id, offset in zip(self.servo_ids, offsets, strict=False):
+                dxl_comm_result, dxl_error = self._packet_handler.write4ByteTxRx(
+                    self._port_handler, dxl_id, ADDR_HOMING_OFFSET, int(offset)
+                )
+                if dxl_comm_result != COMM_SUCCESS or dxl_error != 0:
+                    raise RuntimeError(f"Failed to set homing offset for Dynamixel with ID {dxl_id}")
 
     def set_torque_mode(self, *, enable: bool):
         """Set the torque mode for the Dynamixel servos.
@@ -177,7 +234,7 @@ class DynamixelDriver(DynamixelDriverProtocol):
             raise RuntimeError("Torque must be enabled to set joint positions")
 
         for servo_id, position in zip(self.servo_ids, joint_positions, strict=True):
-            position_value = int(position / self.pos_scale) 
+            position_value = int(position / self.pos_scale)
             param_goal_position = [
                 DXL_LOBYTE(DXL_LOWORD(position_value)),
                 DXL_HIBYTE(DXL_LOWORD(position_value)),
