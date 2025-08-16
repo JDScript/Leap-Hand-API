@@ -16,15 +16,18 @@ from dynamixel_sdk.robotis_def import DXL_LOBYTE
 from dynamixel_sdk.robotis_def import DXL_LOWORD
 import numpy as np
 
+from .constants import ADDR_GOAL_CURRENT
 from .constants import ADDR_GOAL_POSITION
 from .constants import ADDR_HOMING_OFFSET
 from .constants import ADDR_OPERATING_MODE
+from .constants import ADDR_POSITION_D_GAIN
 from .constants import ADDR_POSITION_P_GAIN
 from .constants import ADDR_PRESENT_CURRENT
 from .constants import ADDR_PRESENT_POS_VEL_CUR
 from .constants import ADDR_PRESENT_POSITION
 from .constants import ADDR_PRESENT_VELOCITY
 from .constants import ADDR_TORQUE_ENABLE
+from .constants import ADDR_VELOCITY_P_GAIN
 from .constants import SIZE_GOAL_POSITION
 from .constants import SIZE_PRESENT_CURRENT
 from .constants import SIZE_PRESENT_POS_VEL_CUR
@@ -41,6 +44,26 @@ DEFAULT_CUR_SCALE = 1.34
 
 
 class DynamixelDriver(DynamixelDriverProtocol):
+    def _write_with_retry(
+        self, write_func, *args, retries: int = 3, retry_interval: float = 0.02, err_msg: str = "", **kwargs
+    ):
+        attempt = 0
+        while attempt <= retries:
+            result = write_func(*args, **kwargs)
+            # write1ByteTxRx, write4ByteTxRx等返回 (comm_result, dxl_error)
+            if isinstance(result, tuple) and len(result) == 2:
+                comm_result, dxl_error = result
+            else:
+                comm_result, dxl_error = result, 0
+            if comm_result == COMM_SUCCESS and dxl_error == 0:
+                return True
+            logger.warning(
+                f"Attempt {attempt + 1}/{retries + 1}: {err_msg} (COMM_RESULT={comm_result}, ERROR={dxl_error})"
+            )
+            attempt += 1
+            time.sleep(retry_interval)
+        raise RuntimeError(f"{err_msg} after {retries + 1} attempts")
+
     def __init__(
         self,
         servo_ids: Sequence[int],
@@ -168,19 +191,77 @@ class DynamixelDriver(DynamixelDriverProtocol):
                 if dxl_comm_result != COMM_SUCCESS or dxl_error != 0:
                     raise RuntimeError(f"Failed to set operation mode for Dynamixel with ID {dxl_id}")
 
-    def set_p_gain(self, gains: list[float]):
-        """Set the P gain for the Dynamixel servos.
-
-        Args:
-            gains (list[float]): The P gain values to set.
-        """
+    def set_p_gain(self, gains: list[float], retries: int = 3, retry_interval: float = 0.02):
+        """Set the P gain for the Dynamixel servos, with retries and better error logging."""
         with self._lock:
             for dxl_id, gain in zip(self.servo_ids, gains, strict=False):
-                dxl_comm_result, dxl_error = self._packet_handler.write4ByteTxRx(
-                    self._port_handler, dxl_id, ADDR_POSITION_P_GAIN, int(gain)
+                self._write_with_retry(
+                    self._packet_handler.write2ByteTxRx,
+                    self._port_handler,
+                    dxl_id,
+                    ADDR_POSITION_P_GAIN,
+                    int(gain),
+                    retries=retries,
+                    retry_interval=retry_interval,
+                    err_msg=f"Failed to set P gain for Dynamixel ID {dxl_id}",
+                )
+
+    def set_velocity_p_gain(self, gains: list[float], retries: int = 3, retry_interval: float = 0.02):
+        """Set the velocity P gain for the Dynamixel servos, with retries and better error logging."""
+        with self._lock:
+            for dxl_id, gain in zip(self.servo_ids, gains, strict=False):
+                self._write_with_retry(
+                    self._packet_handler.write2ByteTxRx,
+                    self._port_handler,
+                    dxl_id,
+                    ADDR_VELOCITY_P_GAIN,
+                    int(gain),
+                    retries=retries,
+                    retry_interval=retry_interval,
+                    err_msg=f"Failed to set velocity P gain for Dynamixel ID {dxl_id}",
+                )
+
+    def set_position_d_gain(self, gains: list[float], retries: int = 3, retry_interval: float = 0.02):
+        """Set the position D gain for the Dynamixel servos, with retries and better error logging."""
+        with self._lock:
+            for dxl_id, gain in zip(self.servo_ids, gains, strict=False):
+                self._write_with_retry(
+                    self._packet_handler.write2ByteTxRx,
+                    self._port_handler,
+                    dxl_id,
+                    ADDR_POSITION_D_GAIN,
+                    int(gain),
+                    retries=retries,
+                    retry_interval=retry_interval,
+                    err_msg=f"Failed to set position D gain for Dynamixel ID {dxl_id}",
+                )
+
+    def set_goal_current(self, currents: list[float], retries: int = 3, retry_interval: float = 0.02):
+        """Set the goal current for the Dynamixel servos, with retries and better error logging."""
+        with self._lock:
+            for dxl_id, current in zip(self.servo_ids, currents, strict=False):
+                self._write_with_retry(
+                    self._packet_handler.write2ByteTxRx,
+                    self._port_handler,
+                    dxl_id,
+                    ADDR_GOAL_CURRENT,
+                    int(current),
+                    retries=retries,
+                    retry_interval=retry_interval,
+                    err_msg=f"Failed to set goal current for Dynamixel ID {dxl_id}",
+                )
+
+    def get_p_gain(self) -> dict[int, float]:
+        with self._lock:
+            p_gains = {}
+            for dxl_id in self.servo_ids:
+                data, dxl_comm_result, dxl_error = self._packet_handler.read2ByteTxRx(
+                    self._port_handler, dxl_id, ADDR_POSITION_P_GAIN
                 )
                 if dxl_comm_result != COMM_SUCCESS or dxl_error != 0:
-                    raise RuntimeError(f"Failed to set P gain for Dynamixel with ID {dxl_id}")
+                    raise RuntimeError(f"Failed to get P gain for Dynamixel with ID {dxl_id}")
+                p_gains[dxl_id] = float(data) * self.pos_scale
+            return p_gains
 
     def get_operation_mode(self) -> dict[int, int]:
         with self._lock:
@@ -194,21 +275,22 @@ class DynamixelDriver(DynamixelDriverProtocol):
                 modes[dxl_id] = data
         return modes
 
-    def set_homing_offset(self, offsets: list[int]):
-        """Set the homing offset for the Dynamixel servos.
-
-        Args:
-            offsets (list[float]): The homing offset values to set in pulse.
-        """
+    def set_homing_offset(self, offsets: list[int], retries: int = 3, retry_interval: float = 0.02):
+        """Set the homing offset for the Dynamixel servos, with retries and better error logging."""
         with self._lock:
             for dxl_id, offset in zip(self.servo_ids, offsets, strict=False):
-                dxl_comm_result, dxl_error = self._packet_handler.write4ByteTxRx(
-                    self._port_handler, dxl_id, ADDR_HOMING_OFFSET, int(offset)
+                self._write_with_retry(
+                    self._packet_handler.write4ByteTxRx,
+                    self._port_handler,
+                    dxl_id,
+                    ADDR_HOMING_OFFSET,
+                    int(offset),
+                    retries=retries,
+                    retry_interval=retry_interval,
+                    err_msg=f"Failed to set homing offset for Dynamixel ID {dxl_id}",
                 )
-                if dxl_comm_result != COMM_SUCCESS or dxl_error != 0:
-                    raise RuntimeError(f"Failed to set homing offset for Dynamixel with ID {dxl_id}")
 
-    def set_torque_mode(self, *, enable: bool):
+    def set_torque_mode(self, *, enable: bool, retries: int = 3, retry_interval: float = 0.02):
         """Set the torque mode for the Dynamixel servos.
 
         Args:
@@ -216,11 +298,16 @@ class DynamixelDriver(DynamixelDriverProtocol):
         """
         with self._lock:
             for dxl_id in self.servo_ids:
-                dxl_comm_result, dxl_error = self._packet_handler.write1ByteTxRx(
-                    self._port_handler, dxl_id, ADDR_TORQUE_ENABLE, int(enable)
+                self._write_with_retry(
+                    self._packet_handler.write1ByteTxRx,
+                    self._port_handler,
+                    dxl_id,
+                    ADDR_TORQUE_ENABLE,
+                    int(enable),
+                    retries=retries,
+                    retry_interval=retry_interval,
+                    err_msg=f"Failed to set torque mode for Dynamixel ID {dxl_id}",
                 )
-                if dxl_comm_result != COMM_SUCCESS or dxl_error != 0:
-                    raise RuntimeError(f"Failed to set torque mode for Dynamixel with ID {dxl_id}")
 
         self._torque_enabled = enable
 
@@ -233,6 +320,7 @@ class DynamixelDriver(DynamixelDriverProtocol):
         if not self._torque_enabled:
             raise RuntimeError("Torque must be enabled to set joint positions")
 
+        error_ids = []
         for servo_id, position in zip(self.servo_ids, joint_positions, strict=True):
             position_value = int(position / self.pos_scale)
             param_goal_position = [
@@ -244,13 +332,39 @@ class DynamixelDriver(DynamixelDriverProtocol):
 
             add_param_result = self._group_sync_write.addParam(servo_id, param_goal_position)
             if not add_param_result:
-                raise RuntimeError(f"Failed to set joint angle for Dynamixel with ID {servo_id}")
+                error_ids.append(servo_id)
 
-        comm_result = self._group_sync_write.txPacket()
-        if comm_result != COMM_SUCCESS:
-            raise RuntimeError("Failed to sync write goal position")
+        if error_ids:
+            logger.error(f"Failed to set joint positions for Dynamixel IDs: {error_ids}")
+
+        with self._lock:
+            comm_result = self._group_sync_write.txPacket()
+            if comm_result != COMM_SUCCESS:
+                self.handle_packet_result(comm_result, context="sync_write")
 
         self._group_sync_write.clearParam()
+
+    def handle_packet_result(
+        self,
+        comm_result: int,
+        dxl_error: int | None = None,
+        dxl_id: int | None = None,
+        context: str | None = None,
+    ):
+        """Handles the result from a communication request."""
+        error_message = None
+        if comm_result != COMM_SUCCESS:
+            error_message = self._packet_handler.getTxRxResult(comm_result)
+        elif dxl_error is not None:
+            error_message = self._packet_handler.getRxPacketError(dxl_error)
+        if error_message:
+            if dxl_id is not None:
+                error_message = f"[Motor ID: {dxl_id}] {error_message}"
+            if context is not None:
+                error_message = f"> {context}: {error_message}"
+            logger.error(error_message)
+            return False
+        return True
 
     def get_joint_currents(self):
         return self._joint_currents.copy() * self.cur_scale
