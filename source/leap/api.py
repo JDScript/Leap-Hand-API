@@ -32,7 +32,7 @@ class LeapHand:
     ):
         self._driver = driver
         driver.set_operation_mode(5)
-        driver.set_p_gain([450, 600, 600, 600, 450, 600, 600, 600, 450, 600, 600, 600, 450, 600, 600, 600])
+        driver.set_position_p_gain([450, 600, 600, 600, 450, 600, 600, 600, 450, 600, 600, 600, 450, 600, 600, 600])
         driver.set_position_d_gain([150, 200, 200, 200, 150, 200, 200, 200, 150, 200, 200, 200, 150, 200, 200, 200])
         driver.set_goal_current([350, 350, 350, 350, 350, 350, 350, 350, 350, 350, 350, 350, 350, 350, 350, 350])
         driver.set_torque_mode(enable=True)

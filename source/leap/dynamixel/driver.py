@@ -18,7 +18,6 @@ import numpy as np
 
 from .constants import ADDR_GOAL_CURRENT
 from .constants import ADDR_GOAL_POSITION
-from .constants import ADDR_HOMING_OFFSET
 from .constants import ADDR_OPERATING_MODE
 from .constants import ADDR_POSITION_D_GAIN
 from .constants import ADDR_POSITION_P_GAIN
@@ -191,7 +190,7 @@ class DynamixelDriver(DynamixelDriverProtocol):
                 if dxl_comm_result != COMM_SUCCESS or dxl_error != 0:
                     raise RuntimeError(f"Failed to set operation mode for Dynamixel with ID {dxl_id}")
 
-    def set_p_gain(self, gains: list[float], retries: int = 3, retry_interval: float = 0.02):
+    def set_position_p_gain(self, gains: list[float], retries: int = 3, retry_interval: float = 0.02):
         """Set the P gain for the Dynamixel servos, with retries and better error logging."""
         with self._lock:
             for dxl_id, gain in zip(self.servo_ids, gains, strict=False):
@@ -249,45 +248,6 @@ class DynamixelDriver(DynamixelDriverProtocol):
                     retries=retries,
                     retry_interval=retry_interval,
                     err_msg=f"Failed to set goal current for Dynamixel ID {dxl_id}",
-                )
-
-    def get_p_gain(self) -> dict[int, float]:
-        with self._lock:
-            p_gains = {}
-            for dxl_id in self.servo_ids:
-                data, dxl_comm_result, dxl_error = self._packet_handler.read2ByteTxRx(
-                    self._port_handler, dxl_id, ADDR_POSITION_P_GAIN
-                )
-                if dxl_comm_result != COMM_SUCCESS or dxl_error != 0:
-                    raise RuntimeError(f"Failed to get P gain for Dynamixel with ID {dxl_id}")
-                p_gains[dxl_id] = float(data) * self.pos_scale
-            return p_gains
-
-    def get_operation_mode(self) -> dict[int, int]:
-        with self._lock:
-            modes = {}
-            for dxl_id in self.servo_ids:
-                data, dxl_comm_result, dxl_error = self._packet_handler.read1ByteTxRx(
-                    self._port_handler, dxl_id, ADDR_OPERATING_MODE
-                )
-                if dxl_comm_result != COMM_SUCCESS or dxl_error != 0:
-                    raise RuntimeError(f"Failed to get operation mode for Dynamixel with ID {dxl_id}")
-                modes[dxl_id] = data
-        return modes
-
-    def set_homing_offset(self, offsets: list[int], retries: int = 3, retry_interval: float = 0.02):
-        """Set the homing offset for the Dynamixel servos, with retries and better error logging."""
-        with self._lock:
-            for dxl_id, offset in zip(self.servo_ids, offsets, strict=False):
-                self._write_with_retry(
-                    self._packet_handler.write4ByteTxRx,
-                    self._port_handler,
-                    dxl_id,
-                    ADDR_HOMING_OFFSET,
-                    int(offset),
-                    retries=retries,
-                    retry_interval=retry_interval,
-                    err_msg=f"Failed to set homing offset for Dynamixel ID {dxl_id}",
                 )
 
     def set_torque_mode(self, *, enable: bool, retries: int = 3, retry_interval: float = 0.02):
