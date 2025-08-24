@@ -6,8 +6,6 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "dynamixel-sdk",
-    "ikpy>=3.4.2",
-    "mediapipe>=0.10.14",
     "numpy>=2.2.6",
     "rerun-sdk>=0.24.1",
 ]
