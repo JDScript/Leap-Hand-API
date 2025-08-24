@@ -8,6 +8,13 @@ from source.leap.api import LeapHand
 from source.leap.dynamixel.driver import DynamixelDriver
 from source.leap_policy.policy import RLGamesPolicy
 
+from .constants import REAL_TO_SIM_MAPPING
+from .constants import SIM_LOWER_LIMITS
+from .constants import SIM_TO_REAL_MAPPING
+from .constants import SIM_UPPER_LIMITS
+from .utils import saturate
+from .utils import unscale
+
 
 class LeapHandController(LeapHand):
     def __init__(self, driver, control_freq: int = 10):
@@ -18,12 +25,32 @@ class LeapHandController(LeapHand):
 
         self.device = "mps"
 
-        self.init_pose = self.fetch_grasp_state()
-        self.action_scale = 1 / 5
+        self.sim_dof_lower = torch.tensor(SIM_LOWER_LIMITS, device=self.device)
+        self.sim_dof_upper = torch.tensor(SIM_UPPER_LIMITS, device=self.device)
+
+        self.init_pose = torch.tensor(
+            [
+                0.000,
+                0.500,
+                0.000,
+                0.000,
+                -0.750,
+                1.300,
+                0.000,
+                0.750,
+                1.750,
+                1.500,
+                1.750,
+                1.750,
+                0.00,
+                1.0000,
+                0.0000,
+                0.00,
+            ],
+            device=self.device,
+        )
+        self.action_scale = 1 / 24
         self.action_type = "relative"
-        self.leap_dof_lower, self.leap_dof_upper = self.get_leap_hand_joint_limits()
-        self.leap_dof_lower = torch.tensor(self.leap_dof_lower).to(self.device)
-        self.leap_dof_upper = torch.tensor(self.leap_dof_upper).to(self.device)
 
         self.hist_len = 3
 
@@ -31,106 +58,22 @@ class LeapHandController(LeapHand):
         self.policy = policy
         self.policy.reset_hidden_state()
 
-    def leap_sim_to_leap_hand(self, joints):
-        return joints + 3.14159
-
-    def construct_sim_to_real_transformation(self):
-        self.sim_to_real_indices = torch.tensor(
-            [4, 0, 8, 12, 6, 2, 10, 14, 7, 3, 11, 15, 1, 5, 9, 13], device=self.device
-        )
-        self.real_to_sim_indices = torch.tensor(
-            [1, 12, 5, 9, 0, 13, 4, 8, 2, 14, 6, 10, 3, 15, 7, 11], device=self.device
-        )
-
-    def get_leap_hand_joint_limits(self):
-        upper_limits = [
-            2.2300,
-            2.0940,
-            2.2300,
-            2.2300,
-            1.0470,
-            2.4430,
-            1.0470,
-            1.0470,
-            1.8850,
-            1.9000,
-            1.8850,
-            1.8850,
-            2.0420,
-            1.8800,
-            2.0420,
-            2.0420,
-        ]
-        lower_limits = [
-            -0.3140,
-            -0.3490,
-            -0.3140,
-            -0.3140,
-            -1.0470,
-            -0.4700,
-            -1.0470,
-            -1.0470,
-            -0.5060,
-            -1.2000,
-            -0.5060,
-            -0.5060,
-            -0.3660,
-            -1.3400,
-            -0.3660,
-            -0.3660,
-        ]
-        return lower_limits, upper_limits
-
-    def real_to_sim(self, values):
-        if not hasattr(self, "real_to_sim_indices"):
-            self.construct_sim_to_real_transformation()
-        if values.dim() == 1:
-            return values[self.real_to_sim_indices]
-        return values[:, self.real_to_sim_indices]
-
-    def sim_to_real(self, values):
-        if not hasattr(self, "sim_to_real_indices"):
-            self.construct_sim_to_real_transformation()
-        if values.dim() == 1:
-            return values[self.sim_to_real_indices]
-        return values[:, self.sim_to_real_indices]
-
-    def leap_hand_to_sim_ones(self, joints):
-        joints = self.leap_hand_to_leap_sim(joints)
-        sim_min, sim_max = self.leap_sim_limits()
-        return self.unscale_np(joints, sim_min, sim_max)
-
-    def leap_hand_to_leap_sim(self, joints):
-        return joints - 3.14159
-
-    def leap_sim_limits(self):
-        sim_min = self.sim_to_real(self.leap_dof_lower)
-        sim_max = self.sim_to_real(self.leap_dof_upper)
-        return sim_min, sim_max
-
-    def unscale_np(self, x, lower, upper):
-        return (2.0 * x - upper - lower) / (upper - lower)
-
-    def command_joint_position(self, desired_pose):
-        desired_pose = self.leap_sim_to_leap_hand(desired_pose)
-        desired_pose = self.sim_to_real(desired_pose)
-        desired_pose = desired_pose.detach().cpu().numpy().astype(float).flatten()
-
-        self.set_joints_leap(desired_pose)
-
     def poll_joint_position(self):
-        # read position from hardware
+        "Returns the same joint position as isaac sim's physical dof position"
         joint_position = self._driver.get_joint_positions()
         joint_position = torch.from_numpy(joint_position.astype(np.float32)).to(device=self.device)
-
-        joint_position = self.leap_hand_to_sim_ones(joint_position)
-        joint_position = self.real_to_sim(joint_position)
-        joint_position = (self.leap_dof_upper - self.leap_dof_lower) * (joint_position + 1) / 2 + self.leap_dof_lower
+        joint_position -= torch.pi  # Shift to match sim's zero position
+        joint_position = joint_position[REAL_TO_SIM_MAPPING]
 
         return {"position": joint_position}
 
     def forward_network(self, obs):
         return self.policy.step(obs)["selected_action"]
+
+    def command_joint_position(self, sim_target: torch.Tensor):
+        real_target = sim_target[SIM_TO_REAL_MAPPING]
+        real_target += torch.pi
+        self._driver.set_joint_positions(real_target.cpu().numpy())
 
     def run(self):
         assert self.policy is not None, "Policy must be restored before running"
@@ -139,19 +82,19 @@ class LeapHandController(LeapHand):
         for _ in range(self.control_freq * 4):
             self.command_joint_position(self.init_pose)
             robot_state = self.poll_joint_position()
-            obses = robot_state["position"]
+            obs = robot_state["position"]
             time.sleep(self.control_dt)
         print("Initial position reached!")
 
         # Get current state
         self.command_joint_position(self.init_pose)
         robot_state = self.poll_joint_position()
-        obses = robot_state["position"]
+        obs = robot_state["position"]
 
         obs_hist_buf = torch.zeros((1, 32, self.hist_len), device=self.device, dtype=torch.float32)
-        prev_target = obses.clone()
+        prev_target = obs.clone()
 
-        unscaled_pos = self.unscale_np(obses, self.leap_dof_lower, self.leap_dof_upper)
+        unscaled_pos = unscale(obs, self.sim_dof_lower, self.sim_dof_upper)
         frame = torch.cat([unscaled_pos, prev_target], dim=-1).float()
 
         # Fill history buffer
@@ -172,15 +115,11 @@ class LeapHandController(LeapHand):
                 action = action.squeeze(0)
 
                 if self.action_type == "relative":
-                    action = torch.clamp(action, -1.0, 1.0)
                     target = prev_target + self.action_scale * action
-                elif self.action_type == "absolute":
-                    action = self.unscale_np(action, self.leap_dof_lower, self.leap_dof_upper)
-                    target = self.action_scale * action + (1.0 - self.action_scale) * prev_target
+                    target = saturate(target, self.sim_dof_lower, self.sim_dof_upper)
                 else:
                     raise ValueError(f"Unsupported action type: {self.action_type}. Must be relative or absolute.")
 
-                target = torch.clip(target, self.leap_dof_lower, self.leap_dof_upper)
                 prev_target = target.clone()
 
                 print(f"Sending command: {target}")
@@ -190,8 +129,8 @@ class LeapHandController(LeapHand):
                 robot_state = self.poll_joint_position()
                 print(f"Received state: {robot_state['position']}")
 
-                obses = robot_state["position"]
-                unscaled_pos = self.unscale_np(obses, self.leap_dof_lower, self.leap_dof_upper)
+                obs = robot_state["position"]
+                unscaled_pos = unscale(obs, self.sim_dof_lower, self.sim_dof_upper)
 
                 frame = torch.cat([unscaled_pos, target], dim=-1).float()
                 obs_hist_buf[:, :, :-1] = obs_hist_buf[:, :, 1:]
@@ -211,31 +150,6 @@ class LeapHandController(LeapHand):
             # Disable motors safely
             self._driver.set_torque_mode(enable=False)
             print("Motors disabled.")
-
-    def fetch_grasp_state(self):
-        return torch.tensor(
-            [
-                [
-                    0.000,
-                    0.500,
-                    0.000,
-                    0.000,
-                    -0.750,
-                    1.300,
-                    0.000,
-                    0.750,
-                    1.750,
-                    1.500,
-                    1.750,
-                    1.750,
-                    0.00,
-                    1.0000,
-                    0.0000,
-                    0.00,
-                ]
-            ],
-            device=self.device,
-        )
 
 
 if __name__ == "__main__":
