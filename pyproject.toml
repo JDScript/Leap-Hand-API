@@ -8,6 +8,7 @@ dependencies = [
     "dynamixel-sdk",
     "numpy>=2.2.6",
     "rerun-sdk>=0.24.1",
+    "tyro>=0.9.31",
 ]
 
 [build-system]
@@ -19,6 +20,7 @@ packages = ["source"]
 
 [tool.uv.sources]
 dynamixel-sdk = { path = "vendor/dynamixel-sdk/python" }
+dex-retargeting = { path = "third_party/dex_retargeting", editable = true }
 
 [dependency-groups]
 dev = [
@@ -31,4 +33,12 @@ rl = [
     "rl-games>=1.5.2",
     "pygame>=2.6.1",
     "setuptools>=80.9.0",
+]
+
+teleop = [
+    "dex-retargeting",
+    "loguru>=0.7.3",
+    "mediapipe>=0.10.14",
+    "opencv-python>=4.12.0.88",
+    "rerun-sdk>=0.24.1",
 ]

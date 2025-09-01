@@ -5,9 +5,14 @@
         "dynamixel",
         "HIBYTE",
         "HIWORD",
+        "keypoint",
         "LOBYTE",
         "LOWORD",
+        "Retarget",
         "robotis",
+        "teleop",
+        "Teleoperation",
+        "urdf",
         "usbserial"
     ]
 }

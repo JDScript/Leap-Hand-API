@@ -1,3 +1,9 @@
 [submodule "vendor/dynamixel-sdk"]
 	path = vendor/dynamixel-sdk
 	url = git@github.com:ROBOTIS-GIT/DynamixelSDK.git
+[submodule "third_party/dex_retargeting"]
+	path = third_party/dex_retargeting
+	url = https://github.com/dexsuite/dex-retargeting.git
+[submodule "vendor/dex-urdf"]
+	path = vendor/dex-urdf
+	url = https://github.com/dexsuite/dex-urdf
